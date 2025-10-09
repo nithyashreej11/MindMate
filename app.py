@@ -10,6 +10,8 @@ import base64
 import time
 import json
 from collections import Counter
+import random
+from statistics import mean
 
 # ✅ Must be FIRST Streamlit command
 st.set_page_config(page_title="🧘 MindMate", layout="wide")
@@ -177,11 +179,140 @@ def transcribe_audio(audio_bytes):
         st.error(f"🎙️ Transcription error: {e}")
         return None
 
+
+# -------------------- Mood analysis helpers --------------------
+NEGATIVE_KEYWORDS = ['sad', 'anx', 'depress', 'tired', 'low', 'down', 'worri', 'panic']
+
+def last_n_days_moods(n=14):
+    """Return the list of moods (strings) from the last n chats (most recent first)."""
+    chats = get_chat_history()  # already returns newest-first
+    moods = []
+    seen_dates = set()
+    for ts, _, _, mood in chats:
+        # only one mood per date
+        date = ts.split(' ')[0]
+        if date in seen_dates:
+            continue
+        seen_dates.add(date)
+        moods.append((date, (mood or '').lower()))
+        if len(moods) >= n:
+            break
+    return moods
+
+def count_negative_days(moods):
+    """Count how many of the provided (date,mood) tuples are negative."""
+    c = 0
+    for _, mood in moods:
+        if any(k in (mood or '') for k in NEGATIVE_KEYWORDS):
+            c += 1
+    return c
+
+def negative_streak(moods):
+    """Compute the current consecutive negative-day streak (from most recent going backwards)."""
+    streak = 0
+    for _, mood in moods:
+        if any(k in (mood or '') for k in NEGATIVE_KEYWORDS):
+            streak += 1
+        else:
+            break
+    return streak
+
+def positivity_score(mood):
+    """Return a small numeric positivity score for a mood string (0..1).
+    Simple heuristic: negative keywords -> 0.2, neutral/unknown -> 0.5, positive keywords -> 0.9
+    """
+    if not mood:
+        return 0.5
+    m = mood.lower()
+    if any(k in m for k in NEGATIVE_KEYWORDS):
+        return 0.2
+    if any(k in m for k in ['happy', 'joy', 'good', 'calm', 'relax']):
+        return 0.9
+    return 0.5
+
+def gentle_depression_check_and_prompt():
+    """If 10+ out of last 14 days are negative, show a gentle AI prompt and TTS suggestion."""
+    moods = last_n_days_moods(14)
+    if not moods:
+        return False
+    neg = count_negative_days(moods)
+    if neg >= 10:
+        # get user's name if available
+        profile = st.session_state.get('user_profile') or get_setting('user_profile')
+        name = (profile.get('name') if isinstance(profile, dict) else None) or 'friend'
+        msg = f"Hey {name} 🌷, I noticed you’ve been feeling quite low recently. Would you like to try a calming meditation or talk about what’s been heavy lately?"
+        st.warning(msg)
+        if voice_allowed():
+            audio = tts_cheerful(msg)
+            if audio:
+                try:
+                    b64 = base64.b64encode(audio).decode('utf-8')
+                    data_uri = f"data:audio/mp3;base64,{b64}"
+                    st.markdown(f'<audio src="{data_uri}" autoplay controls></audio>', unsafe_allow_html=True)
+                except Exception:
+                    st.audio(audio, format='audio/mp3')
+        return True
+    return False
+
+# Small pool of positive affirmations
+AFFIRMATIONS = [
+    "You are doing your best — and that is enough.",
+    "Small steps add up. Be kind to yourself today.",
+    "Breathe. You are here, and you matter.",
+    "Every day is a new chance to feel a little better."
+]
+
+def show_affirmation_and_checkin():
+    """Show a random affirmation and a gentle check-in if last mood was negative."""
+    aff = random.choice(AFFIRMATIONS)
+    st.info(f"💛 {aff}")
+    # gentle check-in if last mood negative
+    moods = last_n_days_moods(1)
+    if moods and any(k in (moods[0][1] or '') for k in NEGATIVE_KEYWORDS):
+        st.info("Gentle check-in: I noticed your last mood looked a bit low. Would you like a short breathing exercise?")
+
+
+def show_daily_affirmation_if_needed():
+    """Show a daily affirmation once per calendar day. Returns True when shown."""
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        last = get_setting('last_affirmation_date', None)
+        if last == today:
+            return False
+        # show affirmation and gentle check-in
+        aff = random.choice(AFFIRMATIONS)
+        st.info(f"💛 {aff}")
+        moods = last_n_days_moods(1)
+        if moods and any(k in (moods[0][1] or '') for k in NEGATIVE_KEYWORDS):
+            st.info("Gentle check-in: I noticed your last mood looked a bit low. Would you like a short breathing exercise?")
+        try:
+            set_setting('last_affirmation_date', today)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        # degrade to session-only behavior
+        aff = random.choice(AFFIRMATIONS)
+        st.info(f"💛 {aff}")
+        return True
+
 # ✅ Streamlit UI
 st.title("🧠 MindMate: Your AI Mental Health Companion")
 
 if 'voice' not in st.session_state:
     st.session_state.voice = False
+
+# Show a daily affirmation once per calendar day (persisted). Fall back to session-only.
+if 'daily_affirmation_shown' not in st.session_state:
+    # show_daily_affirmation_if_needed will persist the date; it returns True when it displayed
+    shown = False
+    try:
+        shown = show_daily_affirmation_if_needed()
+    except Exception:
+        # fallback to session-only
+        show_affirmation_and_checkin()
+        shown = True
+    st.session_state['daily_affirmation_shown'] = bool(shown)
 
 # Sidebar control: explicit Enable Voice gesture
 with st.sidebar:
@@ -523,100 +654,90 @@ with tabs[3]:
 
 # 📊 PROGRESS
 with tabs[4]:
-    st.subheader("📊 Your Wellness Progress Overview")
+    st.subheader("📊 Your Wellness Progress — Friendly Overview")
 
-    # Fetch data
-    chats = get_chat_history()  # [(timestamp, user_message, assistant_message, mood)]
-    journals = get_journal_history() if 'get_journal_history' in globals() else []  # optional
+    # Run daily affirmation and check-ins at top
+    show_affirmation_and_checkin()
+    # run gentle depression check (may speak/txt)
+    gentle_depression_check_and_prompt()
+
+    # Data pulls
+    moods = last_n_days_moods(14)  # list of (date, mood)
+    journals = get_journal_history() if 'get_journal_history' in globals() else []
     meditation_sessions = st.session_state.get("meditation_sessions", 0)
     mindfulness_sessions = st.session_state.get("mindfulness_sessions", 0)
     yoga_sessions = st.session_state.get("yoga_sessions", 0)
 
-    # Build mood counts and basic lists
-    mood_counts = Counter()
-    anxious_examples = []
+    # Weekly Mood Overview (average positivity over the last 14 days)
+    positivity_scores = [positivity_score(m) for _, m in moods] if moods else []
+    weekly_avg = (mean(positivity_scores) if positivity_scores else 0.5)
+    col1, col2 = st.columns([2,1])
+    with col1:
+        st.markdown("### 💭 Weekly Mood Overview")
+        st.progress(weekly_avg)
+        st.caption(f"Average positivity (last {len(positivity_scores)} days): {weekly_avg:.2f}")
+
+    # Negative Mood Streak
+    with col2:
+        st.markdown("### 🌧️ Negative Mood Streak")
+        streak = negative_streak(moods)
+        st.metric(label="Days in a row feeling low", value=streak)
+
+    st.divider()
+
+    # Mindfulness Stats
+    st.markdown("### 🧘 Mindfulness & Yoga")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Meditation sessions", meditation_sessions)
+    with c2:
+        st.metric("Mindfulness practices", mindfulness_sessions)
+    with c3:
+        st.metric("Yoga sessions", yoga_sessions)
+
+    st.divider()
+
+    # Journaling activity
+    st.markdown("### 📓 Journaling")
+    st.write(f"Journaled days: {len(journals)}")
+    if journals:
+        st.write("Recent entries:")
+        for d, e in journals[:3]:
+            st.write(f"- `{d}` — {e[:150]}{'...' if len(e) > 150 else ''}")
+
+    st.divider()
+
+    # Encouragement generated by the model (short)
+    st.markdown("### 💌 Encouragement")
+    try:
+        prompt = (
+            "You are a gentle wellness coach. Produce a 1-line encouraging message acknowledging small progress for a user trying to feel better."
+        )
+        res = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role":"system","content":"You are kind and concise."}, {"role":"user","content":prompt}],
+            temperature=0.6
+        )
+        encourage = res.choices[0].message.content.strip()
+    except Exception:
+        encourage = "You’re doing great. Keep taking small steps each day — it adds up."
+
+    st.info(encourage)
+
+    # --- Mood trend chart (restore detailed trend view) ---
+    # Build a simple trend chart using the last messages we collected above
+    chats = get_chat_history()
     messages = []
+    mood_counts = Counter()
     for ts, user_msg, assistant_msg, mood in chats:
         if mood:
             mood_counts[mood.lower()] += 1
         messages.append((ts, user_msg, assistant_msg, mood))
-        # detect anxious mentions either in mood or message text
-        text_lower = (user_msg or "").lower()
-        if (mood and 'anx' in mood.lower()) or any(k in text_lower for k in ["anxious", "anxiety", "panic", "worried"]):
-            anxious_examples.append((ts, user_msg))
 
-    # First: Mindfulness & Yoga Summary, Journaling, Motivation (move these up)
-    st.markdown("### 🌿 Mindfulness & Yoga Summary")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(label="🧘‍♀️ Meditation Sessions", value=meditation_sessions)
-        if meditation_sessions > 0:
-            st.progress(min(meditation_sessions / 10, 1.0))
-
-    with col2:
-        st.metric(label="🌸 Mindfulness Practices", value=mindfulness_sessions)
-        if mindfulness_sessions > 0:
-            st.progress(min(mindfulness_sessions / 10, 1.0))
-
-    with col3:
-        st.metric(label="🧍‍♀️ Yoga Sessions", value=yoga_sessions)
-        if yoga_sessions > 0:
-            st.progress(min(yoga_sessions / 10, 1.0))
-
-    st.divider()
-
-    # Journaling Activity & Problem Progress
-    st.markdown("### 📓 Journaling Activity & Problem Progress")
-    if journals:
-        st.success(f"You’ve journaled **{len(journals)} days** so far 🪶.")
-        st.caption("Keep expressing your feelings regularly. It’s helping you grow 💖.")
-
-        # simple 'problems solved' heuristic
-        positive = ["resolved","improved","better","less","fixed","solved","helped","reduced","managed","overcame"]
-        recent = journals[-10:]
-        positive_count = 0
-        for _, entry in recent:
-            low = (entry or "").lower()
-            if any(p in low for p in positive):
-                positive_count += 1
-
-        solved_pct = (positive_count / len(recent)) * 100 if recent else 0
-        st.metric(label="Problems showing improvement (est.)", value=f"{solved_pct:.0f}%")
-        st.markdown("**Recent journal excerpts indicating progress**")
-        for d, entry in recent[-3:]:
-            if any(p in (entry or "").lower() for p in positive):
-                st.write(f"- `{d}` — {entry}")
-    else:
-        st.warning("You haven’t started journaling yet. Try writing one entry today!")
-
-    st.divider()
-
-    # Motivation & Streaks
-    st.markdown("### 🔔 Motivation & Streaks")
-    st.info("💬 Daily reminders are keeping you on track.\n🌸 You're doing your best — keep going!")
-    st.caption("(Coming soon: streak tracking and daily achievement badges 🏆)")
-
-    st.divider()
-
-    # Now: Emotional Insights
-    st.markdown("### 🧠 Emotional Insights")
-    if mood_counts:
-        total_moods = sum(mood_counts.values())
-        st.write(f"You’ve shared feelings **{total_moods}** times.")
-
-        # Top moods
-        top = mood_counts.most_common(5)
-        st.markdown("**Top moods**")
-        for mood, count in top:
-            st.text(f"{mood.capitalize()}: {count}")
-
-        # Multi-mood trend: compute counts per mood across time buckets
+    if messages:
         bins = 6
         bucket_size = max(1, len(messages) // bins)
-        # collect unique moods
         unique_moods = list({m for _, _, _, m in messages if m})
-        # create buckets
         bucket_series = {m: [] for m in unique_moods}
         for i in range(0, len(messages), bucket_size):
             part = messages[i:i+bucket_size]
@@ -627,23 +748,22 @@ with tabs[4]:
             for m in unique_moods:
                 bucket_series[m].append(counts.get(m.lower(), 0))
 
-        # Prepare a dataframe-like dict for st.line_chart
         chart_data = {}
         for m in unique_moods:
             chart_data[m.capitalize()] = bucket_series[m]
         if chart_data:
-            st.markdown("**Mood trend over time**")
-            st.line_chart(chart_data)
-        else:
-            st.info("Not enough mood-labeled chats to build a mood trend. Keep chatting to generate mood labels.")
-
-        # show some example anxious messages (recent 3)
-        if anxious_examples:
-            st.markdown("**Recent anxious messages**")
-            for ts, msg in anxious_examples[-3:]:
-                st.write(f"- `{ts}` — {msg}")
+            st.markdown("### 📈 Mood trend over time")
+            try:
+                # line_chart will import pandas under the hood; guard against environments
+                # where pandas isn't available during quick import checks.
+                st.line_chart(chart_data)
+            except Exception as e:
+                # Don't let a missing optional dependency crash the whole app during imports.
+                st.warning("Could not render trend chart (optional dependency missing). The rest of the app is available.")
+                # log to console for debugging
+                print('Chart render skipped:', e)
     else:
-        st.info("No mood data yet. Start chatting to track your emotional patterns .")
+        st.info("Not enough mood-labeled chats to build a mood trend. Keep chatting to generate mood labels.")
 
 
 # 🎵 MUSIC
