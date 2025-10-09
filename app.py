@@ -753,15 +753,7 @@ with tabs[4]:
             chart_data[m.capitalize()] = bucket_series[m]
         if chart_data:
             st.markdown("### 📈 Mood trend over time")
-            try:
-                # line_chart will import pandas under the hood; guard against environments
-                # where pandas isn't available during quick import checks.
-                st.line_chart(chart_data)
-            except Exception as e:
-                # Don't let a missing optional dependency crash the whole app during imports.
-                st.warning("Could not render trend chart (optional dependency missing). The rest of the app is available.")
-                # log to console for debugging
-                print('Chart render skipped:', e)
+            st.line_chart(chart_data)
     else:
         st.info("Not enough mood-labeled chats to build a mood trend. Keep chatting to generate mood labels.")
 
