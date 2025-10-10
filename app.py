@@ -344,6 +344,36 @@ with st.sidebar:
         # reflect persisted preference in session state without requiring a click
         st.session_state.voice = True
 
+    # Simple Login control for showing affirmation on login
+    st.markdown("---")
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if st.session_state.logged_in:
+        if st.button("Logout"):
+            st.session_state.logged_in = False
+            # clear daily login affirmation flag so next login shows again
+            st.session_state.pop('seen_affirmation_on_login', None)
+            st.success("Logged out")
+    else:
+        if st.button("Login"):
+            st.session_state.logged_in = True
+            st.success("Logged in")
+            # show a random affirmation immediately on login (session-only)
+            if not st.session_state.get('seen_affirmation_on_login'):
+                aff = random.choice(AFFIRMATIONS)
+                st.info(f"💛 {aff}")
+                # optionally play TTS if voice enabled
+                if voice_allowed():
+                    audio = text_to_speech(aff)
+                    if audio:
+                        try:
+                            b64 = base64.b64encode(audio).decode('utf-8')
+                            data_uri = f"data:audio/mp3;base64,{b64}"
+                            st.markdown(f'<audio src="{data_uri}" autoplay controls></audio>', unsafe_allow_html=True)
+                        except Exception:
+                            st.audio(audio, format='audio/mp3')
+                st.session_state['seen_affirmation_on_login'] = True
+
 # --- Onboarding / Name personalization ----------------------------------
 profile = get_setting('user_profile', None)
 with st.sidebar.expander("Your Profile", expanded=True):
