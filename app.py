@@ -28,56 +28,56 @@ def get_groq_client(api_key: str | None = None):
         api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
     return Groq(api_key=api_key)
 # Safe debug: show where the GROQ key is found (st.secrets or env), but DO NOT print the key itself.
-def _groq_key_source():
-    """Return 'st.secrets', 'env', or None."""
-    try:
-        if st.secrets.get("GROQ_API_KEY"):
-            return 'st.secrets'
-    except Exception:
-        # st.secrets may raise if Streamlit isn't fully available yet; ignore
-        pass
-    if os.environ.get('GROQ_API_KEY'):
-        return 'env'
-    return None
+# def _groq_key_source():
+#     """Return 'st.secrets', 'env', or None."""
+#     try:
+#         if st.secrets.get("GROQ_API_KEY"):
+#             return 'st.secrets'
+#     except Exception:
+#         # st.secrets may raise if Streamlit isn't fully available yet; ignore
+#         pass
+#     if os.environ.get('GROQ_API_KEY'):
+#         return 'env'
+#     return None
 
-src = _groq_key_source()
-if src:
-    try:
-        st.sidebar.success(f"GROQ key found in: {src}")
-    except Exception:
-        pass
-else:
-    try:
-        st.sidebar.error("GROQ key missing from st.secrets and environment")
-    except Exception:
-        pass
+# src = _groq_key_source()
+# if src:
+#     try:
+#         st.sidebar.success(f"GROQ key found in: {src}")
+#     except Exception:
+#         pass
+# else:
+#     try:
+#         st.sidebar.error("GROQ key missing from st.secrets and environment")
+#     except Exception:
+#         pass
 
-import hashlib
+# import hashlib
 
 # Safe fingerprint (sha256) of the key for comparison (does NOT reveal key)
-def _groq_key_fingerprint():
-    try:
-        k = None
-        try:
-            k = st.secrets.get('GROQ_API_KEY')
-        except Exception:
-            pass
-        if not k:
-            k = os.environ.get('GROQ_API_KEY')
-        if not k:
-            return None
-        h = hashlib.sha256(k.encode()).hexdigest()
-        # show only first 12 characters for compactness
-        return h[:12]
-    except Exception:
-        return None
+# def _groq_key_fingerprint():
+#     try:
+#         k = None
+#         try:
+#             k = st.secrets.get('GROQ_API_KEY')
+#         except Exception:
+#             pass
+#         if not k:
+#             k = os.environ.get('GROQ_API_KEY')
+#         if not k:
+#             return None
+#         h = hashlib.sha256(k.encode()).hexdigest()
+#         # show only first 12 characters for compactness
+#         return h[:12]
+#     except Exception:
+#         return None
 
-fp = _groq_key_fingerprint()
-if fp:
-    try:
-        st.sidebar.write(f"GROQ key fingerprint: {fp}")
-    except Exception:
-        pass
+# fp = _groq_key_fingerprint()
+# if fp:
+#     try:
+#         st.sidebar.write(f"GROQ key fingerprint: {fp}")
+#     except Exception:
+#         pass
 
 # Resolve api key and create Groq client (pass api_key so cache keys by value)
 _api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
