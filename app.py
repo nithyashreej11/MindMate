@@ -18,13 +18,15 @@ st.set_page_config(page_title="🧘 MindMate", layout="wide")
 
 # ✅ Initialize Groq client
 @st.cache_resource
-def get_groq_client():
-    api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
-    if not api_key:
-        st.error("🚨 Please set GROQ_API_KEY in Streamlit secrets or environment variables")
-        st.stop()
-    return Groq(api_key=api_key)
+def get_groq_client(api_key: str | None = None):
+    """Return a Groq client for the provided api_key.
 
+    If api_key is None, resolve it from st.secrets or the environment. Accepting None
+    makes the function tolerant to older call sites that don't pass the key.
+    """
+    if not api_key:
+        api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
+    return Groq(api_key=api_key)
 # Safe debug: show where the GROQ key is found (st.secrets or env), but DO NOT print the key itself.
 def _groq_key_source():
     """Return 'st.secrets', 'env', or None."""
@@ -77,7 +79,13 @@ if fp:
     except Exception:
         pass
 
-client = get_groq_client()
+# Resolve api key and create Groq client (pass api_key so cache keys by value)
+_api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
+if not _api_key:
+    st.error("🚨 Please set GROQ_API_KEY in Streamlit secrets or environment variables")
+    st.stop()
+
+client = get_groq_client(_api_key)
 
 # ✅ Text-to-Speech using gTTS
 def text_to_speech(text):
